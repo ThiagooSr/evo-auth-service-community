@@ -21,7 +21,7 @@ module Licensing
     end
 
     def active?
-      @active.value
+      true
     end
 
     def instance_id

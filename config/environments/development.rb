@@ -88,6 +88,9 @@ Rails.application.configure do
   config.hosts << /.*\.evo-ai\.svc\.cluster\.local/
   config.hosts << /.*\.evo-ai/
   
+  # Clear hosts to allow any domain (like auth.kaiabi.com) since this is running on VPS in development mode
+  config.hosts.clear
+  
   # Skip DNS rebinding protection for health check endpoints.
   config.host_authorization = { exclude: ->(request) { request.path == "/up" || request.path == "/health" || request.path == "/ready" || request.path == "/health/live" } }
 end
