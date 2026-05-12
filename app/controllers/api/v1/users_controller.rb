@@ -40,7 +40,8 @@ class Api::V1::UsersController < Api::BaseController
 
   def update
     ActiveRecord::Base.transaction do
-      @user.update!(user_params.slice(:name, :availability).compact)
+      update_attrs = user_params.slice(:name, :availability, :password).compact_blank
+      @user.update!(update_attrs)
 
       if user_params[:role].present?
         update_user_role(user_params[:role])
