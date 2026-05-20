@@ -59,7 +59,7 @@ module EvoAuthService
     config.middleware.use Licensing::SetupGate
 
     # I18n configuration - Multi-language support
-    config.i18n.default_locale = :en
+    config.i18n.default_locale = ENV.fetch("DEFAULT_LOCALE", "pt-BR").to_sym
     config.i18n.available_locales = [:en, :es, :fr, :it, :pt, :'pt-BR']
     config.i18n.fallbacks = [:en]
     # Raise error if translation is missing in development/test
