@@ -9,62 +9,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `spec/db/seeds/rbac_spec.rb` — regression guard for the agent role permission set (EVO-1060). Catches accidental additions of destructive permissions (e.g. `pipelines.update` granting access to archive/set_as_default). Also pins the `account_owner` / `super_admin` boundary so the installation-level config panel cannot leak outside `super_admin`.
-
-### Changed
-
-- Migration `20260513170000_add_pipelines_read_to_agent_role.rb` backfills `pipelines.read` on the `agent` role for already-bootstrapped installations (EVO-1060). Production deploys run `db:migrate` and not `db:seed`, so changes to `db/seeds/rbac.rb` that affect an existing role must ship alongside an idempotent migration — same convention established by `20260505155854_promote_first_user_to_super_admin.rb`. Idempotent and reversible.
-
-### Deprecated
-
 - N/A
 
-### Removed
+### Changed
 
 - N/A
 
 ### Fixed
 
-- **Agent role: pipelines.read granted, pipelines.update NOT granted** (EVO-1060). Fresh installs now expose the `/pipelines` page (and the sidebar entry) to agents. Drag-and-drop between stages was already authorised by `pipelines.read` alone — `pipelines.update` had been added under a wrong assumption and would have silently unlocked destructive endpoints (`archive`, `set_as_default`, rename of shared pipelines, `PipelineServiceDefinitions` CRUD). Existing agent users pick up the change automatically on the next seed run because the seed does `destroy_all` then re-creates from the array.
+- N/A
+
+## [v1.0.0-rc4] - 2026-05-25
+
+MFA hardening release focused on plaintext backup-code remediation, plus licensing resilience, onboarding survey delivery, and runtime storage configuration. The post-EVO-991 cleanup forces re-setup for any user whose backup-code array still contains legacy plaintext entries; the licensing service now operates fail-open during outages instead of blocking logins; and Admin UI storage changes (S3/GCS/local) apply at runtime without restart.
+
+### Added
+
+- **EVO-1104 — Onboarding survey push** — implementation of onboarding-survey response push plus resume endpoint. Users that abandoned the flow can pick up where they left off, and submitted answers are forwarded to the collection service.
+- **Licensing fail-open** — when the licensing server is unreachable (timeout, DNS, 5xx) the auth-service now operates in a short fail-open window instead of blocking logins. Reduces blast radius of incidents on the licensing server.
+
+### Changed
+
+- **Runtime storage provider** — storage settings (S3, GCS, local) saved via the Admin UI are applied to the running process without restart. A warn log is emitted whenever the service falls back to the default storage provider (EVO-1050).
+
+### Fixed
+
+- **EVO-991 — Plaintext backup codes from pre-fix deployments** — one-shot migration zeroes `otp_backup_codes` and clears `mfa_confirmed_at` for any user whose array still contains non-BCrypt (legacy plaintext) entries. Affected users are flagged with `mfa_setup_incomplete: true` in the user payload, and `auth_controller#login` bypasses the MFA challenge for that state (`mfa_enabled?` returns `false` when `mfa_confirmed_at` is `nil`) until re-setup completes. Specs cover the mixed-legacy array, post-migration empty state, and bypass regression.
+- **EVO-1104 — Session cache not invalidated after MFA re-setup** — `complete_mfa_setup` now calls `TokenValidationService.invalidate_cache_for_user` so the session reflects `mfa_setup_incomplete: false` immediately after `verify_totp`, instead of waiting up to 5 minutes for the cache TTL.
+- **Double-load guard and production hardening for extension points** — review-blocker fix preventing double-load of `LoginGate` and `TokenClaims` plus extra hardening in production paths.
+- **ActiveRecord migration version downgrade 7.2 → 7.1** — migration version downgraded to match the Rails version actually in use. Avoids boot errors when running `db:migrate` against environments still on 7.1.
 
 ### Security
 
-- N/A
+- Plaintext backup codes may have been stored on deployments prior to the EVO-991 fix. The migration in this release invalidates those records and forces affected users to re-setup their MFA. If you enabled MFA before v1.0.0-rc4, you will be prompted to set up TOTP again on next login. Recommended as a precaution — not a response to a confirmed leak.
+
+## [v1.0.0-rc3] - 2026-05-17
+
+Stabilization release — focuses on bug fixes in 2FA backup codes (500 + plaintext hash), `account_owner` / `super_admin` boundary on role endpoints (privilege escalation via delegation), runtime application of SMTP/BMS/Resend configs, structured password validation on user creation, and `agent` role RBAC (drop of `pipelines.update`, backfill of `pipelines.read`). Also consolidates the open-core foundation via `EXTENSION_POINTS.md` + strict extension modules (`LoginGate`, `TokenClaims`), adds full role CRUD scoped to `account_owner`, and introduces permissions for `products.*` and `template_bundles`.
+
+### Added
+
+- **EVO-1381 — Extension point modules with LoginGate and TokenClaims** (#31) — strict implementation of extension points for Enterprise: `LoginGate` (hook called before token issuance, allows denying login with a reason), `TokenClaims` (hook that adds custom claims to the JWT). Both with strict contracts via duck-typing + explicit error if the Enterprise implementation returns an invalid shape.
+- **EVO-1375 — `EXTENSION_POINTS.md`** (#29) — document declaring the extension points of the auth-service. Versioned contract.
+- **EVO-1061 — Full role CRUD scoped to `account_owner`** — `index`/`show`/`create`/`update`/`destroy` endpoints for custom roles, all limited to the account scope of the requesting `account_owner`. Includes permission delegation with privilege escalation guard.
+- **EVO-1116 — `template_bundles` resource in RBAC** — `template_bundles.read` / `manage` permissions added via migration backfill, supporting the CRM template export/import feature.
+- **`products.*` permissions** — resource added to RBAC with backfill for existing roles (`account_owner` gets `manage`, `agent` gets `read`).
+- **`spec/db/seeds/rbac_spec.rb`** — regression guard for the `agent` role permission set (EVO-1060). Detects accidental additions of destructive permissions (e.g., `pipelines.update` would grant access to `archive` / `set_as_default`). Also pins the `account_owner` / `super_admin` boundary to ensure the installation-level config panel does not leak outside `super_admin`.
+- **`spec/controllers/roles_controller_spec.rb`** — boundary regression guards between `account_owner` and `super_admin` (EVO-1060), ensuring neither role can escape its scope.
+
+### Changed
+
+- **EVO-1049 — SMTP/BMS/Resend settings applied at runtime** (#24) — previously these settings were read only at container boot, requiring a restart to reflect changes made via the UI. Now they are re-resolved on every operation, allowing the operator to change SMTP/BMS/Resend without downtime.
+- **Migration `20260513170000_add_pipelines_read_to_agent_role.rb`** — backfills `pipelines.read` on the `agent` role for already-bootstrapped installations (EVO-1060). PROD runs `db:migrate` and not `db:seed`, so changes to `db/seeds/rbac.rb` that affect an existing role must ship with an idempotent migration — same convention as `20260505155854_promote_first_user_to_super_admin.rb`. Idempotent and reversible.
+- **Docs** standardized for Evolution Foundation 2026 (README, LICENSE, NOTICE, TRADEMARKS).
+- **Docs (org)** — GitHub URLs updated from `EvolutionAPI` to `evolution-foundation`.
+
+### Fixed
+
+- **2FA backup codes — 500 + plaintext** (EVO-991) — the backup-codes listing endpoint returned 500 (NoMethodError on a nil field) and codes were stored in plaintext in the DB. Fixed with BCrypt hashing + nil-field handling + applied round 3 review feedback.
+- **EVO-1063 — Structured 422 password validation** — previously the password validation failure on user creation returned 422 without a machine-readable field; the frontend could not map the error to the correct field. Now the response includes structured codes (`password.too_short`, `password.missing_uppercase`, etc.) consumed by the inline checklist on the frontend (EVO-1063).
+- **Migration `add_message_template_permissions_to_account_owner`** — on fresh install it failed with `PG::UndefinedTable: roles` for a particular timestamp ordering; now it falls through silently when the table does not yet exist (`table_exists?(:roles)` guard).
+- **EVO-1060 — Agent role: `pipelines.read` granted, `pipelines.update` NOT granted** — fresh installs now expose the `/pipelines` page (and the sidebar entry) to agents. Drag-and-drop between stages was already authorized by `pipelines.read` alone — `pipelines.update` had been added under a wrong assumption and would have silently unlocked destructive endpoints (`archive`, `set_as_default`, rename of shared pipelines, `PipelineServiceDefinitions` CRUD). Existing `agent` users receive the change automatically on the next seed run (the seed does `destroy_all` and re-creates from the array).
+
+### Security
+
+- **EVO-1061 — Privilege escalation via delegation in `roles_controller`** — the role update endpoint allowed an `account_owner` to delegate permissions they did not themselves hold (proxy privilege escalation path). Closed with an explicit check: a user can only delegate permissions they themselves possess. Includes a regression spec.
+- **EVO-1061 — Review blockers H1/M1-M3** — high/medium findings from round 2 of the code review applied (account scope, payload validation, error responses without leakage).
+- **2FA backup codes** — codes are now hashed with BCrypt before storage; previously they sat in plaintext in the database (any DB read exposed the user's second factor).
 
 ## [v1.0.0-rc2] - 2026-05-05
 
 ### Added
 
-- **Novo role `super_admin`** — installation-level operator. Detém todas as permissões do `account_owner` mais `installation_configs.manage` (a única permissão que dá acesso ao painel `/settings/admin`: SMTP, Storage, Social Login, OpenAI, Channels, Inbound Email, Frontend Runtime). Atribuído automaticamente ao usuário criado via setup wizard (bootstrap). Outros usuários criados depois pela UI continuam recebendo `account_owner` (sem acesso ao painel admin).
-  - Implementação distribuída entre `db/seeds/rbac.rb` (fresh installs) e migration `20260505155854_promote_first_user_to_super_admin.rb` (PROD existente — única forma de chegar lá automaticamente, já que `db:seed` não roda em deploys).
-  - A migration cria o role, sincroniza permissões via `ResourceActionsConfig.all_permission_keys`, **revoga `installation_configs.manage` do `account_owner`**, promove o primeiro user (`User.order(:created_at).first`) e **revoga tokens ativos** desse user para forçar relogin (caso contrário o JWT antigo com `role: account_owner` continuaria válido até expirar).
-  - `SetupBootstrapService#assign_global_role` atualizado para atribuir `super_admin` (com fallback defensivo para `account_owner`).
-  - Idempotente e reversível (`down` restaura o estado anterior).
+- **New `super_admin` role** — installation-level operator. Holds all `account_owner` permissions plus `installation_configs.manage` (the only permission that grants access to the `/settings/admin` panel: SMTP, Storage, Social Login, OpenAI, Channels, Inbound Email, Frontend Runtime). Automatically assigned to the user created via the setup wizard (bootstrap). Other users created later via the UI continue to receive `account_owner` (no access to the admin panel).
+  - Implementation split between `db/seeds/rbac.rb` (fresh installs) and migration `20260505155854_promote_first_user_to_super_admin.rb` (existing PROD — the only way to get there automatically, since `db:seed` does not run on deploys).
+  - The migration creates the role, syncs permissions via `ResourceActionsConfig.all_permission_keys`, **revokes `installation_configs.manage` from `account_owner`**, promotes the first user (`User.order(:created_at).first`) and **revokes active tokens** for that user to force re-login (otherwise the old JWT with `role: account_owner` would remain valid until expiry).
+  - `SetupBootstrapService#assign_global_role` updated to assign `super_admin` (with a defensive fallback to `account_owner`).
+  - Idempotent and reversible (`down` restores the previous state).
 ### Fixed
 
-- **POST `/api/v1/users` retornava 500 quando payload omitia `role`**: agora cai no padrão `agent` em vez de procurar `Role.find_by!(key: nil)` e levantar `RecordNotFound`. (#9)
-- **`RoleSerializer` não expunha `key` / `system`**: o frontend depende dessas chaves para o select de roles funcionar; adicionados em `full` e `basic`. (#9)
-- **Login sempre retornava 401 para usuários criados pela UI**: `UsersController#create` permitia `:password` em `new_user_params` mas não passava o valor para o `AgentBuilder.new(...)`. Como `AgentBuilder` cai no fallback `password.presence || "1!aA#{SecureRandom.alphanumeric(12)}"` quando `password` é `nil`, todo agente criado pela UI nascia com hash Argon2 aleatório que ninguém conhecia — login com a senha digitada nunca batia. Agora `password: new_user_params['password']` é encaminhado. `bulk_create` mantido inalterado (intencionalmente gera senha aleatória — fluxo de convite).
-- **Migration `20260423162525_add_message_template_permissions_to_account_owner` falhava em fresh install com `PG::UndefinedTable: roles`**: a migration `init_schema` (timestamp `9025...` por typo histórico) cria a tabela `roles`, mas roda DEPOIS dessa por causa do timestamp futuro. Adicionado guard `ActiveRecord::Base.connection.table_exists?(:roles)` no `up` e `down` — fresh installs pulam a migration silenciosamente (o seed/bootstrap cobre depois), instalações existentes continuam rodando como antes.
-- **`init_schema` (timestamp `9025...`) totalmente idempotente**: `make setup` em fresh install corria com race condition contra o `evo-bot-runtime` Go core, que tenta criar uma tabela `users` mínima ao subir. Quando o Go vencia a corrida, o `init_schema` falhava com `PG::DuplicateTable`. Migration reescrita com `if_not_exists: true` em todos os `create_table`, `add_index`, e helper `add_fk_if_missing` para foreign keys — agora o resultado final é determinístico independente de quem chega primeiro. (commit `ec736a9`)
-- **EVO-1002 follow-up**: registradas as permissões `update_message_template` e `delete_message_template` no seeder de RBAC. (#5)
-- **EVO-971**: gate de `/setup/status` agora considera tanto bootstrap quanto licensing — não só licensing. (#8)
-- **EVO-967**: agentes convidados são auto-confirmados; lookup de role passou a tolerar role inexistente sem 500. (#3)
+- **POST `/api/v1/users` returned 500 when the payload omitted `role`**: now falls back to the `agent` default instead of looking up `Role.find_by!(key: nil)` and raising `RecordNotFound`. (#9)
+- **`RoleSerializer` did not expose `key` / `system`**: the frontend depends on these keys for the role select to work; added to `full` and `basic`. (#9)
+- **Login always returned 401 for users created via the UI**: `UsersController#create` permitted `:password` in `new_user_params` but did not pass the value to `AgentBuilder.new(...)`. Since `AgentBuilder` falls back to `password.presence || "1!aA#{SecureRandom.alphanumeric(12)}"` when `password` is `nil`, every agent created via the UI was born with a random Argon2 hash that nobody knew — login with the typed password never matched. Now `password: new_user_params['password']` is forwarded. `bulk_create` left unchanged (intentionally generates a random password — invite flow).
+- **Migration `20260423162525_add_message_template_permissions_to_account_owner` failed on fresh install with `PG::UndefinedTable: roles`**: the `init_schema` migration (timestamp `9025...` due to a historical typo) creates the `roles` table, but runs AFTER this one because of the future timestamp. Added `ActiveRecord::Base.connection.table_exists?(:roles)` guard on `up` and `down` — fresh installs skip the migration silently (the seed/bootstrap covers it later), existing installations keep running as before.
+- **`init_schema` (timestamp `9025...`) fully idempotent**: `make setup` on fresh install raced against the `evo-bot-runtime` Go core, which tries to create a minimal `users` table at startup. When the Go service won the race, `init_schema` failed with `PG::DuplicateTable`. Migration rewritten with `if_not_exists: true` on every `create_table`, `add_index`, and an `add_fk_if_missing` helper for foreign keys — the final result is now deterministic regardless of who arrives first. (commit `ec736a9`)
+- **EVO-1002 follow-up**: registered the `update_message_template` and `delete_message_template` permissions in the RBAC seeder. (#5)
+- **EVO-971**: the `/setup/status` gate now considers both bootstrap and licensing — not only licensing. (#8)
+- **EVO-967**: invited agents are auto-confirmed; role lookup now tolerates a missing role without returning 500. (#3)
 
 ### Changed
 
-- Workflow de CI publica também as imagens `develop` para staging. (#4)
-- `installation_configs.manage` movida da lista de permissões padrão do `account_owner` para a lista `account_owner_exclusive` no `db/seeds/rbac.rb`. **Breaking change controlado**: account_owners criados depois deste release não veem mais o menu "Admin Settings" (comportamento esperado no Community single-tenant — só o bootstrap user / `super_admin` deve ter acesso). A migration de upgrade preserva acesso para o operador original.
+- CI workflow also publishes `develop` images to staging. (#4)
+- `installation_configs.manage` moved from the `account_owner` default permission list to the `account_owner_exclusive` list in `db/seeds/rbac.rb`. **Controlled breaking change**: account_owners created after this release no longer see the "Admin Settings" menu (expected behavior in single-tenant Community — only the bootstrap user / `super_admin` should have access). The upgrade migration preserves access for the original operator.
 
 ## [v1.0.0-rc1] - 2026-04-24
 
 ### Added
 
-- Primeiro release candidate público do `evo-auth-service-community` no contexto da família CRM Community.
+- First public release candidate of `evo-auth-service-community` in the context of the CRM Community family.
 
 ### Changed
 
-- Tag bootstrap a partir do código `2.0.0` original (`evo-auth-service`).
+- Bootstrap tag from the original `2.0.0` code (`evo-auth-service`).
 
 ## [2.0.0] - 2025-01-20
 
