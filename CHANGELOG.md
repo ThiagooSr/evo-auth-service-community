@@ -19,6 +19,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - N/A
 
+## [v1.0.0-rc6] - 2026-06-12
+
+**Republish + feature batch.** Republishes `:latest` from a fresh build (the rc5-named image at Docker Hub had been desynced — see Operator action below) **and** ships eight commits accumulated on `develop` since rc5 was tagged. Operators upgrading from rc5 should expect both new features and bugfixes; operators upgrading from a poisoned `:latest` get those plus the actual rc5 content they thought they already had.
+
+### Operator action
+
+- **ACTION REQUIRED if you pulled `:latest` between 2026-05-27 and 2026-06-12 12:00 UTC.**
+  The image at that period was the desynced rc5 build (digest `sha256:4c08dca7…`) which contained pre-rc4 source for `app/services/licensing/setup_gate.rb` (the old blocking version that returns `503 SETUP_REQUIRED`) and `db/migrate/20250819224900_init_schema.rb` (pre-`#36`, without the type-aware `add_fk_if_missing`). Pull again:
+  ```sh
+  docker pull evoapicloud/evo-auth-service-community:latest
+  # Expected new digest: sha256:7bed488c1c2612dc3a395f2543c501ac485ec2d5d0ec7716d27f6c756d7d514e
+  ```
+- Symptoms you may have hit on the poisoned image: `DatatypeMismatch` boot crashes on legacy installs with `users.id integer`; permanent `503 SETUP_REQUIRED` on `/api/v1/*` when the licensing server was unreachable. Both are now correctly fixed in `:latest`.
+
+### Added
+
+- **EVO-1233 — message_templates RBAC resource + seed grants** (`54e15eb`).
+- **EVO-1716 — message_templates resource actions** (`ab1e422`, #41).
+- **Email confirmation flow + GitHub OAuth provider** (`a0e0702`) — adds Devise email-confirmation lifecycle and a GitHub identity provider in the OmniAuth chain. Existing logins unaffected; new signups receive a confirmation email if `SMTP_*` env vars are configured.
+- **Bootstrap user gets enterprise `evolution_admin` grant** (`61b099e`) — first user created via `setup/register` is now assigned the `evolution_admin` role automatically. Cleaner self-hosted bootstrap; no manual grant step.
+- **Smoke harness for `:latest`** (`b2a514a`, EVO-1404) — `docker-compose.smoke-fresh.yml` + `.github/workflows/smoke-fresh.yml`. Pulls `:latest`, runs `db:create && db:migrate && rails server` against fresh Postgres + Redis, asserts container reaches `healthy` + `/health` 200 + `/ready` 200. Triggered on PR changes to `Dockerfile`, `bin/docker-entrypoint`, `db/migrate/**`, the smoke compose or the smoke workflow.
+
+### Changed
+
+- **EVO-1551 round 2 — `mask_contact_pii` toggle hardening** (`49e62d0`, #39) — restricts the `mask_contact_pii` flip on `PATCH /api/v1/account` to admin roles (`enforce_admin_for_mask_pii_change` with effective-change gate). Earlier round 1 fix is upgraded to also deep-merge `settings`/`custom_attributes` so a partial PATCH no longer drops sibling keys.
+- **OmniAuth runtime credential resolution** (`f2f2872`) — OAuth provider secrets are now resolved at request time from `runtime_configs` instead of at boot. Operators changing `GOOGLE_OAUTH_*` / `GITHUB_OAUTH_*` via the Admin UI no longer need a service restart for the new credentials to take effect.
+- **`docker-publish.yml` — bypass cache on release paths** (`b2a514a`, EVO-1404) — added `no-cache: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}` to `docker/build-push-action`. Tag pushes (`v*.*.*`) and `main` branch pushes — both of which publish `:latest` — now rebuild from scratch. The `develop` branch keeps GHA cache for speed (it publishes only `:develop` / `:develop-<sha>`). This was the root-cause mitigation for the rc5 desync.
+
+### Fixed
+
+- **`bms_provider` URL construction** (`37c9097`, `fe084a5`) — BMS API URL is now read from runtime config and built dynamically per endpoint instead of hardcoded. Mail delivery via the BMS provider works against per-tenant BMS instances.
+- **Image `:latest` actually contains rc5+ content** (EVO-1404 republish) — fresh build of `v1.0.0-rc6` replaces the desynced `:latest`. Verified inside the container: `setup_gate.rb` is the observability-only version (no `UNAVAILABLE_BODY`); `init_schema.rb` contains `column_type_incompatible?` and the `Skipping FK ... type mismatch` log line.
+
+
+
+- N/A
+
+### Fixed
+
+- **EVO-1551 (round 2)** — fecha dois bypasses do mascaramento de PII de contato no `PATCH /api/v1/account`. (1) `enforce_admin_for_mask_pii_change` agora checa **mudança efetiva** (current vs incoming) em vez de mera presença da chave — agent não consegue mais derrubar `mask_contact_pii` mandando um body sem a chave. (2) `update` passa a fazer deep-merge em `settings` e `custom_attributes`; PATCH parcial deixou de apagar chaves irmãs (bug genérico de perda de dados). Specs novos em `spec/requests/api/v1/account_spec.rb` cobrem ambos os caminhos.
+
+## [v1.0.0-rc5] - 2026-05-27
+
+Hardening release for fresh-install scenarios. Three critical fixes from the multimport incident (2026-05-27) make EvoAuth survive cold starts where multiple services race against the shared database and the licensing server is unreachable. The auth-service no longer 500s when a sibling service has pre-created a stub `users` table, no longer blocks any request behind a licensing gate, and now actually processes its licensing Sidekiq queue so `SetupJob` / `HeartbeatJob` complete instead of being silently parked. Also ships AuthBridge 1.1.0 (extension point for Enterprise email lookup + sign-in) and a small batch of migration compatibility fixes.
+
+### Highlights
+
+- **Multimport / cold-start hardening (3 fixes)** — fresh installs that boot alongside other services sharing the same Postgres no longer break authentication. Stub `users(id integer)` tables created by sibling services (e.g. `evo-processor` SQLAlchemy `create_all`) are now detected and dropped before `InitSchema` runs, so the canonical schema (uuid PK, `mfa_method`, `encrypted_password`, `oauth_access_tokens`, …) is created intact. Combined with the SetupGate and Sidekiq queue fixes below, the auth-service boots and serves traffic cleanly in mixed-service environments even when the licensing server is temporarily unreachable.
+- **Licensing never blocks a request** — `SetupGate` is downgraded from a hard 503 gate to a pure observability hook. Self-hosted Community installs no longer go down when the licensing server is unreachable — license state becomes telemetry, not an enforcement layer.
+- **AuthBridge 1.1.0** — new strict extension points (`find_user_by_email`, `sign_in_request`) for Enterprise builds, contract-versioned via the existing `EXTENSION_POINTS.md` flow.
+
+### Added
+
+- **AuthBridge 1.1.0 — `find_user_by_email` + `sign_in_request`** (`e7c31e5`) — two new strict extension points exposed by `AuthBridge`. `find_user_by_email` lets an Enterprise implementation resolve a user from an alternate identity store (e.g. SSO directory) before the local lookup; `sign_in_request` lets it inject custom logic around request-time sign-in (audit, MFA elevation, just-in-time provisioning). Both follow the existing duck-typed contract with explicit error if the implementation returns an invalid shape. Documented in `EXTENSION_POINTS.md` (consumer-specific examples scrubbed in `1eed63e`).
+
+### Changed
+
+- **Docs — `EXTENSION_POINTS.md` scrub** (`1eed63e`) — removed consumer-specific examples from the AuthBridge 1.1.0 notes so the contract document stays generic and stable across Enterprise consumers.
+
+### Fixed
+
+- **Multimport stub `users` table drop before `InitSchema`** (`a962b3b`) — on fresh installs where another service (typically `evo-processor` via SQLAlchemy `create_all`) wins the race to Postgres, a minimal `users(id integer)` stub is created with the wrong primary-key type and no auth columns. `InitSchema` then silently aliased onto that stub, leaving the database without `oauth_access_tokens`, `mfa_method`, `encrypted_password`, etc. — every authentication path 500'd on `relation "oauth_access_tokens" does not exist`. The migration now detects the stub (integer-PK `users` with no auth columns) and drops it before `InitSchema` runs, so the canonical schema is created intact. Idempotent — does nothing on installations whose `users` table already matches the canonical shape.
+- **`SetupGate` is observability, never enforcement** (`221097c`) — the licensing setup gate previously returned `503 SETUP_REQUIRED` on every non-bypass route when license context was inactive. On self-hosted Community this turned any licensing-server outage into a full auth outage. `SetupGate` now (a) attempts to rehydrate license context if inactive, (b) emits the observability signal regardless of the result, and (c) **always forwards the request**. License state becomes telemetry; no request is blocked by it.
+- **Sidekiq licensing queue actually processed** (`6219e38`) — `licensing` was missing from `config/sidekiq.yml`, so `SetupJob` and `HeartbeatJob` were enqueued and silently parked forever. Result: `api_key` was never persisted after setup, and heartbeat retries never fired. The queue is now registered and processed alongside the default queues.
+- **`add_fk_if_missing` type-aware for legacy integer PKs** (`39c92b3`, #36) — the FK helper now inspects the referenced PK type and matches the column type accordingly, so installations migrating from a historical integer-PK `users` table no longer fail with type-mismatch errors when adding foreign keys.
+- **ActiveRecord migration version downgrade for compatibility** (`c725a96`, #37) — migration version downgraded to 7.1 to match the Rails version actually in use, preventing boot errors on `db:migrate` against environments still on 7.1.
+
+### Notes for upgrade
+
+- **Licensing no longer blocks any endpoint.** If your operational runbooks relied on the auth-service returning `503 SETUP_REQUIRED` while licensing was unreachable, update them — that signal is now an observability event, not a request-blocking response. License state still surfaces via logs/metrics for monitoring.
+- **Fresh installs in mixed-service environments now boot cleanly** even when multiple services race against the shared Postgres. No action required for new installs.
+- **If you are upgrading from an installation broken by the rc4 multimport race** (typical symptom: `relation "oauth_access_tokens" does not exist` on every login attempt; the `users` table exists but its PK is `integer` instead of `uuid` and the auth columns are missing), drop the cached stub `users` table manually before running `db:migrate` on rc5 — the migration's auto-detect handles the common shape, but if your stub diverges you may need to drop it explicitly. Back up first.
+- **Sidekiq operators**: the `licensing` queue is now active. Ensure your Sidekiq worker process is started with the default queue list (or explicitly includes `licensing`) so `SetupJob` / `HeartbeatJob` are picked up.
+- **AuthBridge consumers (Enterprise)**: extension contract bumped to 1.1.0 — see `EXTENSION_POINTS.md`. 1.0.x consumers continue to work; new hooks are opt-in.
+
 ## [v1.0.0-rc4] - 2026-05-25
 
 MFA hardening release focused on plaintext backup-code remediation, plus licensing resilience, onboarding survey delivery, and runtime storage configuration. The post-EVO-991 cleanup forces re-setup for any user whose backup-code array still contains legacy plaintext entries; the licensing service now operates fail-open during outages instead of blocking logins; and Admin UI storage changes (S3/GCS/local) apply at runtime without restart.
@@ -350,3 +425,10 @@ Thanks to all contributors who made this release possible:
 ---
 
 **Note**: This changelog follows the [Keep a Changelog](https://keepachangelog.com/) format. Each release includes detailed information about new features, changes, deprecations, removals, fixes, and security updates.
+
+[Unreleased]: https://github.com/evolution-foundation/evo-auth-service-community/compare/v1.0.0-rc5...HEAD
+[v1.0.0-rc5]: https://github.com/evolution-foundation/evo-auth-service-community/compare/v1.0.0-rc4...v1.0.0-rc5
+[v1.0.0-rc4]: https://github.com/evolution-foundation/evo-auth-service-community/compare/v1.0.0-rc3...v1.0.0-rc4
+[v1.0.0-rc3]: https://github.com/evolution-foundation/evo-auth-service-community/compare/v1.0.0-rc2...v1.0.0-rc3
+[v1.0.0-rc2]: https://github.com/evolution-foundation/evo-auth-service-community/compare/v1.0.0-rc1...v1.0.0-rc2
+[v1.0.0-rc1]: https://github.com/evolution-foundation/evo-auth-service-community/releases/tag/v1.0.0-rc1

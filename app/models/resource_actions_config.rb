@@ -320,6 +320,17 @@ class ResourceActionsConfig
       }
     },
 
+    message_templates: {
+      name: 'Message Templates',
+      description: 'Global and channel-bound message template catalog management',
+      actions: {
+        read: { name: 'View', description: 'View message templates' },
+        create: { name: 'Create', description: 'Create message templates' },
+        update: { name: 'Update', description: 'Update message templates' },
+        delete: { name: 'Delete', description: 'Delete message templates' }
+      }
+    },
+
     teams: {
       name: 'Teams',
       description: 'Agent team management and organization',
@@ -362,6 +373,17 @@ class ResourceActionsConfig
         create: { name: 'Create', description: 'Create new canned responses' },
         update: { name: 'Update', description: 'Update canned response content' },
         delete: { name: 'Delete', description: 'Delete canned responses' }
+      }
+    },
+
+    message_templates: {
+      name: 'Message Templates',
+      description: 'Global (channel-independent) message templates',
+      actions: {
+        read: { name: 'View', description: 'View global message templates' },
+        create: { name: 'Create', description: 'Create global message templates' },
+        update: { name: 'Update', description: 'Update global message templates' },
+        delete: { name: 'Delete', description: 'Delete global message templates' }
       }
     },
 
