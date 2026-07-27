@@ -26,7 +26,8 @@ module UserSerializer
       confirmed: user.confirmed?,
       confirmed_at: user.confirmed_at,
       custom_attributes: user.custom_attributes || {},
-      setup_survey_completed: user.setup_survey_completed?
+      setup_survey_completed: user.setup_survey_completed?,
+      message_signature: user.message_signature
     }
 
     # Optional fields
