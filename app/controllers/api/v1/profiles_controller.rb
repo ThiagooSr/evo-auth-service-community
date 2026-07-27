@@ -25,7 +25,10 @@ class Api::V1::ProfilesController < Api::BaseController
     filtered_params = profile_params
 
     if current_user.update(filtered_params)
-      TokenValidationService.invalidate_cache_for_user(current_user) if avatar_param.present?
+      # Invalida sempre, não só quando troca avatar — o cache de /auth/validate
+      # (5 min, por token) senão continua servindo dados desatualizados de
+      # qualquer outro campo (ex: message_signature) até expirar sozinho.
+      TokenValidationService.invalidate_cache_for_user(current_user)
 
       message = if current_user.unconfirmed_email.present?
                   'Profile updated. Confirmation email sent to the new address.'
