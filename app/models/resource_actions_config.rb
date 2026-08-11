@@ -378,6 +378,21 @@ class ResourceActionsConfig
       }
     },
 
+    procedures: {
+      name: 'Procedures',
+      description: 'Step-by-step service procedures with rich media and visibility controls',
+      actions: {
+        read: { name: 'View', description: 'View service procedures' },
+        create: { name: 'Create', description: 'Create new service procedures' },
+        update: { name: 'Update', description: 'Update service procedures' },
+        delete: { name: 'Delete', description: 'Archive or delete service procedures' },
+        publish: { name: 'Publish', description: 'Publish service procedures for agents' },
+        share: { name: 'Share', description: 'Share procedures through public links' },
+        send_to_customer: { name: 'Send to Customer', description: 'Send customer-facing procedures from a conversation' },
+        manage_visibility: { name: 'Manage Visibility', description: 'Manage team, inbox and public visibility rules' }
+      }
+    },
+
     message_templates: {
       name: 'Message Templates',
       description: 'Global (channel-independent) message templates',
