@@ -125,7 +125,12 @@ agent_permissions = [
   # The Settings screen itself is gated by teams.manage (CRM-70), which the agent
   # does not hold: read alone cannot hide it, since teams.read is basic for everyone.
   'teams.read',
-  'inboxes.read'
+  'inboxes.read',
+  # Kaiabí custom feature. Same use-vs-manage split as macros/message_templates
+  # above: the agent uses existing procedures in the chat (read + send to
+  # customer) but does not manage the content (create/update/delete/publish/
+  # visibility/share stay with account_owner/super_admin).
+  'procedures.read', 'procedures.send_to_customer'
   # EVO-1938: administrative Settings resources (AI Agents/Bots/API keys/folders/
   # sessions, Integrations, Channels, Working Hours, Segments, Journeys, Campaigns)
   # are intentionally NOT granted to the default agent. The frontend routes/menu and

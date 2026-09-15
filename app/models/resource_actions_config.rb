@@ -433,6 +433,27 @@ class ResourceActionsConfig
       }
     },
 
+    # Kaiabí custom feature (evo-ai-crm-community's ProceduresController) —
+    # not part of upstream evolution-foundation. Registered here so Settings >
+    # Roles can grant it; the CRM's own EvoPermissionConcern would authorize
+    # against a granted key regardless, but without a catalog entry the admin
+    # UI never offers a checkbox to grant it in the first place.
+    procedures: {
+      name: 'Procedures',
+      description: 'Step-by-step attendance procedures agents can follow and share with customers',
+      actions: {
+        read: { name: 'View', description: 'View procedures' },
+        create: { name: 'Create', description: 'Create new procedures' },
+        update: { name: 'Update', description: 'Update procedure content' },
+        delete: { name: 'Delete', description: 'Delete procedures' },
+        publish: { name: 'Publish', description: 'Publish or unpublish a procedure' },
+        manage_visibility: { name: 'Manage Visibility', description: 'Control which teams/agents can see a procedure' },
+        send_to_customer: { name: 'Send to Customer', description: 'Send a procedure into an active conversation' },
+        share: { name: 'Share', description: 'Generate/manage a public share link for a procedure' },
+        write: { name: 'Write', description: 'Reserved umbrella write action for procedures' }
+      }
+    },
+
     webhooks: {
       name: 'Webhooks',
       description: 'Webhook integration management for external systems',
